@@ -195,7 +195,7 @@ Phir ye JSON return kar:
 {
   "account_health": "Healthy or Average or Struggling",
   "verdict_line": "1 line — honest, sharp, Hinglish — max 12 words",
-  "growth_score": ${JSON.stringify({score: 0})},
+  "growth_score": 0,
   "reels_analysis": [
     {
       "number": 1,
