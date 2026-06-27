@@ -123,7 +123,7 @@ app.post("/api/analyze", async function(req, res) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          directUrls: ["https://www.instagram.com/" + username + "/"],
+          directUrls:username,
           resultsLimit: 10,
         }),
       }
