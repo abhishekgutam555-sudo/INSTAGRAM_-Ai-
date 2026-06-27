@@ -119,7 +119,7 @@ app.post("/api/analyze", async function(req, res) {
   if (!username) return res.status(400).json({ error: "Username required" });
 
   try {
-    var apifyUrl = "https://api.apify.com/v2/acts/apify~instagram-reel-scraper/run-sync-get-dataset-items?token=" + APIFY_TOKEN + "&timeout=120&memory=512";
+    var apifyUrl = "https://api.apify.com/v2/acts/apify~instagram-reel-scraper/run-sync-get-dataset-items?token=" + APIFY_TOKEN + "&timeout=60";
 
     var apRes = await fetch(apifyUrl, {
       method: "POST",
