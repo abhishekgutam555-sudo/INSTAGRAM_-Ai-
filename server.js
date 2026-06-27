@@ -123,7 +123,7 @@ app.post("/api/analyze", async function(req, res) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          directUrls:username,
+          directUrls: ["https://www.instagram.com/" + username + "/"],
           resultsLimit: 10,
         }),
       }
@@ -318,4 +318,3 @@ var PORT = process.env.PORT || 3000;
 app.listen(PORT, function() {
   console.log("InstaGrow AI running on port " + PORT);
 });
-
