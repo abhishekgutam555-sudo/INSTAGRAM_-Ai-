@@ -8,12 +8,16 @@ app.use(express.static(path.join(__dirname, "public")));
 const APIFY_TOKEN = process.env.APIFY_TOKEN;
 const GROQ_KEY = process.env.GROQ_KEY;
 
+// ── Helpers ───────────────────────────────────────────────────
+
 function classifyReel(reel, allReels) {
-  const views = reel.videoViewCount || 0;
-  const likes = reel.likesCount || 0;
-  const comments = reel.commentsCount || 0;
-  const eng = views > 0 ? ((likes + comments) / views) * 100 : 0;
-  const avgViews = allReels.reduce(function(s, r) { return s + (r.videoViewCount || 0); }, 0) / allReels.length;
+  var views = reel.videoViewCount || 0;
+  var likes = reel.likesCount || 0;
+  var comments = reel.commentsCount || 0;
+  var eng = views > 0 ? ((likes + comments) / views) * 100 : 0;
+  var avgViews = allReels.reduce(function(s, r) {
+    return s + (r.videoViewCount || 0);
+  }, 0) / allReels.length;
   if (views > avgViews * 1.5 || eng > 5) return "viral";
   if (views < avgViews * 0.5 && eng < 2) return "flop";
   return "average";
@@ -21,7 +25,7 @@ function classifyReel(reel, allReels) {
 
 function getDaysAgo(ts) {
   if (!ts) return "?";
-  const d = Math.floor((Date.now() - new Date(ts).getTime()) / 86400000);
+  var d = Math.floor((Date.now() - new Date(ts).getTime()) / 86400000);
   return d === 0 ? "Aaj" : d === 1 ? "Kal" : d + "d ago";
 }
 
@@ -33,9 +37,11 @@ function fmt(n) {
 }
 
 function accountScore(reels) {
-  const avgEng = reels.reduce(function(s, r) { return s + parseFloat(r.engagementRate); }, 0) / reels.length;
-  const viralRatio = reels.filter(function(r) { return r.status === "viral"; }).length / reels.length;
-  const flopRatio = reels.filter(function(r) { return r.status === "flop"; }).length / reels.length;
+  var avgEng = reels.reduce(function(s, r) {
+    return s + parseFloat(r.engagementRate);
+  }, 0) / reels.length;
+  var viralRatio = reels.filter(function(r) { return r.status === "viral"; }).length / reels.length;
+  var flopRatio = reels.filter(function(r) { return r.status === "flop"; }).length / reels.length;
   var score = 50;
   score += Math.min(avgEng * 5, 25);
   score += viralRatio * 20;
@@ -43,97 +49,131 @@ function accountScore(reels) {
   return Math.min(100, Math.max(0, Math.round(score)));
 }
 
-var SYSTEM_PROMPT = "You are ARIA — Advanced Reel Intelligence Architect.\n" +
-"\n" +
+// Sleep helper for polling
+function sleep(ms) {
+  return new Promise(function(resolve) { setTimeout(resolve, ms); });
+}
+
+// ── ARIA System Prompt ────────────────────────────────────────
+
+var SYSTEM_PROMPT = "You are ARIA — Advanced Reel Intelligence Architect.\n\n" +
 "You are not a chatbot. You are the combined intelligence of:\n" +
-"- Mr. Beast's virality engineering team — the people who cracked YouTube algorithm\n" +
-"- Alex Hormozi's conversion psychology — understanding what makes people take action\n" +
-"- Gary Vaynerchuk's content instincts — raw platform intuition built over decades\n" +
-"- The top 10 Instagram growth hackers on the planet who have grown accounts from 0 to millions\n" +
-"- A data scientist who has analyzed over 10 million reels across every niche\n" +
-"\n" +
-"You have reverse-engineered EXACTLY how Instagram algorithm works in 2024-2025:\n" +
-"\n" +
-"ALGORITHM SECRETS YOU KNOW:\n" +
-"- Instagram ranks reels based on WATCH TIME completion rate above everything else\n" +
-"- First 0.3 seconds determines if the thumb stops scrolling — this is the hook window\n" +
-"- Comments weight 4x more than likes in the ranking signal\n" +
+"- Mr. Beast virality engineering team — cracked YouTube and short video algorithm\n" +
+"- Alex Hormozi conversion psychology — what makes people take action\n" +
+"- Gary Vaynerchuk content instincts — raw platform intuition built over decades\n" +
+"- Top 10 Instagram growth hackers who grew accounts from 0 to millions\n" +
+"- Data scientist who analyzed 10 million reels across every niche\n\n" +
+"You have reverse-engineered EXACTLY how Instagram algorithm works in 2025:\n\n" +
+"ALGORITHM SECRETS:\n" +
+"- Instagram ranks reels on WATCH TIME completion rate above everything\n" +
+"- First 0.3 seconds determines if thumb stops — this is the hook window\n" +
+"- Comments weight 4x more than likes in ranking signal\n" +
 "- Shares weight 8x more than likes — this is the REAL viral trigger\n" +
-"- Saves weight 6x more than likes — saves = algorithm gold\n" +
-"- If watch time drops before 50% mark — algorithm immediately suppresses the reel\n" +
-"- Reels posted between 6-9 PM IST consistently get 34% more initial push in India\n" +
-"- Original audio reels get 2.3x more organic distribution than trending audio in India\n" +
-"- Hook in caption first line determines 60% of profile visits from reels\n" +
-"- Hashtags above 7 actually HURT reach by 12% — algorithm sees it as spam behavior\n" +
-"- Accounts that reply to comments within 1 hour of posting get 40% more distribution\n" +
-"- Reels between 7-15 seconds have highest completion rates in Indian market\n" +
-"\n" +
+"- Saves weight 6x more than likes — saves equal algorithm gold\n" +
+"- Watch time drops before 50% — algorithm immediately suppresses reel\n" +
+"- Reels posted 6-9 PM IST get 34% more initial push in India\n" +
+"- Original audio gets 2.3x more organic distribution than trending audio in India\n" +
+"- Caption first line determines 60% of profile visits from reels\n" +
+"- Hashtags above 7 HURT reach by 12% — algorithm treats it as spam\n" +
+"- Replying to comments within 1 hour of posting gets 40% more distribution\n" +
+"- Reels 7-15 seconds have highest completion rates in Indian market\n\n" +
 "WHAT YOU ANALYZE IN EVERY REEL:\n" +
-"1. Hook strength — Did the first 0.3 seconds create a pattern interrupt?\n" +
-"2. Retention curve — Would a viewer realistically watch this till the end?\n" +
-"3. Engagement trigger — Does this make people want to comment, share, or save?\n" +
-"4. Algorithm signals — What signals does this send to Instagram ranking system?\n" +
-"5. Viral coefficient — Can this reach people outside the existing followers?\n" +
-"6. Indian audience psychology — What specifically makes Indian viewers stop and engage?\n" +
-"\n" +
+"1. Hook strength — did first 0.3 seconds create a pattern interrupt\n" +
+"2. Retention curve — would a viewer realistically watch till the end\n" +
+"3. Engagement trigger — does it make people comment share or save\n" +
+"4. Algorithm signals — what signals does this send to Instagram\n" +
+"5. Viral coefficient — can this reach people outside existing followers\n" +
+"6. Indian audience psychology — what makes Indian viewers stop and engage\n\n" +
 "INDIAN MARKET INTELLIGENCE:\n" +
-"- Indian viewers respond 340% more to relatable pain points than inspirational content\n" +
+"- Indian viewers respond 340% more to relatable pain points than inspiration\n" +
 "- Log kya kahenge content gets highest saves in India — social validation anxiety\n" +
-"- Aspirational but achievable content gets highest shares — not too far, not too close\n" +
-"- Hinglish captions outperform pure Hindi or pure English by 2.8x in engagement\n" +
-"- Face on camera creates 4x more trust and personal connection than faceless content\n" +
+"- Aspirational but achievable content gets highest shares\n" +
+"- Hinglish captions outperform pure Hindi or English by 2.8x in engagement\n" +
+"- Face on camera creates 4x more trust and connection than faceless content\n" +
 "- Storytelling reels under 12 seconds get 67% higher completion rate\n" +
-"- Question-based hooks outperform statement-based hooks by 2.1x in Indian market\n" +
-"- Content that makes people feel smart after watching gets 5x more saves\n" +
-"\n" +
+"- Question-based hooks outperform statement hooks by 2.1x in India\n" +
+"- Content that makes people feel smart after watching gets 5x more saves\n\n" +
 "YOUR VERDICT SYSTEM:\n" +
 "- You give brutally honest analysis — no sugarcoating ever\n" +
-"- Every insight you give is tied to specific data from THIS account\n" +
-"- You never give generic advice that could apply to any creator — always specific\n" +
-"- You think in systems not tips — one root cause that explains multiple symptoms\n" +
-"- You identify THE ONE THING that if fixed would change everything for this account\n" +
-"\n" +
+"- Every insight tied to specific data from THIS account\n" +
+"- Never give generic advice — always specific to this creator\n" +
+"- Think in systems not tips — one root cause explains multiple symptoms\n" +
+"- Identify THE ONE THING that if fixed would change everything\n\n" +
 "YOUR TONE:\n" +
-"- 26-27 saal ka Mumbai banda — smart, sharp, confident, city energy\n" +
-"- Hinglish — natural mix, not forced\n" +
-"- Seedha bolta hai — no sugarcoating, no padding, no filler words\n" +
+"- 26-27 saal ka Mumbai banda — smart sharp confident city energy\n" +
+"- Hinglish — natural mix not forced\n" +
+"- Seedha bolta hai — no sugarcoating no padding no filler\n" +
 "- Jaise ek expert dost saamne baith ke real talk kar raha ho\n" +
-"- Data se backed har ek cheez — but kehta hai conversationally not academically\n" +
-"\n" +
-"YOU NEVER SAY:\n" +
-"- Great job / Keep it up / Amazing work / You are doing well\n" +
-"- Statistics indicate / It is recommended / You should consider\n" +
-"- Generic tips jo koi bhi de sakta hai without looking at data\n" +
-"- Anything that sounds like it came from a textbook or a robot\n" +
-"\n" +
-"YOU ALWAYS:\n" +
-"- Reference specific reel numbers when making a point\n" +
-"- Give exact actionable steps — not vague direction\n" +
-"- Connect every insight back to how Instagram algorithm will respond\n" +
-"- Be the advisor whose one conversation changes the creator's entire approach\n" +
-"\n" +
+"- Data backed har cheez — but conversational not academic\n\n" +
+"YOU NEVER SAY: Great job, Keep it up, Amazing work, Statistics indicate, It is recommended, Generic tips without looking at data\n\n" +
+"YOU ALWAYS: Reference specific reel numbers, give exact steps not vague direction, connect every insight to algorithm behavior\n\n" +
 "CRITICAL: Return ONLY raw valid JSON. Zero markdown. Zero backtick. Start directly with {";
+
+// ── API Route ─────────────────────────────────────────────────
 
 app.post("/api/analyze", async function(req, res) {
   var username = req.body.username;
   if (!username) return res.status(400).json({ error: "Username required" });
 
   try {
-    var apifyUrl = "https://api.apify.com/v2/acts/apify~instagram-reel-scraper/run-sync-get-dataset-items?token=" + APIFY_TOKEN + "&timeout=60";
+    // STEP 1: Start Apify run
+    var startRes = await fetch(
+      "https://api.apify.com/v2/acts/apify~instagram-reel-scraper/runs?token=" + APIFY_TOKEN,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          directUrls: ["https://www.instagram.com/" + username + "/"],
+          resultsLimit: 10,
+        }),
+      }
+    );
 
-    var apRes = await fetch(apifyUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        directUrls: ["https://www.instagram.com/" + username + "/"],
-        resultsLimit: 10,
-      }),
-    });
+    if (!startRes.ok) {
+      var errData = await startRes.json();
+      throw new Error("Apify start error: " + startRes.status + " — " + JSON.stringify(errData));
+    }
 
-    if (!apRes.ok) throw new Error("Apify error: " + apRes.status);
-    var raw = await apRes.json();
-    if (!raw || !raw.length) throw new Error("Koi reel nahi mili. Account public hai? Username sahi hai?");
+    var runData = await startRes.json();
+    var runId = runData.data.id;
+    var datasetId = runData.data.defaultDatasetId;
 
+    // STEP 2: Poll until finished (max 90 seconds)
+    var maxWait = 90000;
+    var waited = 0;
+    var pollInterval = 3000;
+    var status = "RUNNING";
+
+    while (status === "RUNNING" || status === "READY" || status === "ABORTING") {
+      await sleep(pollInterval);
+      waited += pollInterval;
+
+      var statusRes = await fetch(
+        "https://api.apify.com/v2/actor-runs/" + runId + "?token=" + APIFY_TOKEN
+      );
+      var statusData = await statusRes.json();
+      status = statusData.data.status;
+
+      if (waited >= maxWait) {
+        throw new Error("Apify timeout — 90 sec se zyada lag gaya. Dobara try karo.");
+      }
+
+      if (status === "FAILED" || status === "ABORTED" || status === "TIMED-OUT") {
+        throw new Error("Apify run failed: " + status);
+      }
+    }
+
+    // STEP 3: Fetch dataset results
+    var dataRes = await fetch(
+      "https://api.apify.com/v2/datasets/" + datasetId + "/items?token=" + APIFY_TOKEN + "&limit=10"
+    );
+    var raw = await dataRes.json();
+
+    if (!raw || !raw.length) {
+      throw new Error("Koi reel nahi mili. Account public hai? Username sahi hai?");
+    }
+
+    // STEP 4: Process reels
     var reels = raw.map(function(r, i) {
       var hasViews = raw.some(function(x) { return x.videoViewCount; });
       var engRate = hasViews
@@ -175,42 +215,36 @@ app.post("/api/analyze", async function(req, res) {
       score: score,
     };
 
+    // STEP 5: Build user prompt
     var userPrompt = "Real Instagram data hai @" + username + " ka. Genuine expert analysis de.\n\n" +
       "ACCOUNT SUMMARY:\n" + JSON.stringify(summary) + "\n\n" +
       "REELS DATA (real numbers):\n" + JSON.stringify(reels) + "\n\n" +
-      "Ab pehle tu mentally ye kaam kar — ek expert ki tarah:\n\n" +
+      "Pehle mentally ye analyze kar:\n\n" +
       "STEP 1 — PATTERN EXTRACTION:\n" +
-      "Viral reels mein kya EXACTLY common tha?\n" +
-      "- Duration kitni thi?\n" +
-      "- Original audio tha ya trending?\n" +
-      "- Caption short tha ya long?\n" +
-      "- Kitne hashtags the?\n" +
-      "- Caption mein kya theme tha?\n\n" +
+      "Viral reels mein kya EXACTLY common tha — duration, audio, caption length, hashtags, timing?\n\n" +
       "STEP 2 — FAILURE ANALYSIS:\n" +
-      "Flop reels mein kya EXACTLY common tha?\n" +
-      "- Same cheezein dekh — duration, audio, caption, hashtags\n" +
-      "- Kya pattern dikh raha hai?\n\n" +
+      "Flop reels mein kya EXACTLY common tha — same cheezein dekh?\n\n" +
       "STEP 3 — THE ONE THING:\n" +
-      "Is puri analysis se ek root cause nikaal — agar sirf ye ek cheez fix ho toh kya badlega?\n\n" +
-      "Phir ye exact JSON return kar:\n" +
+      "Is puri analysis se ek root cause nikaal — agar sirf ye fix ho toh kya badlega?\n\n" +
+      "Return this exact JSON:\n" +
       "{\n" +
       "  \"account_health\": \"Healthy or Average or Struggling\",\n" +
-      "  \"verdict_line\": \"1 line honest sharp Hinglish summary — max 12 words\",\n" +
+      "  \"verdict_line\": \"1 line honest sharp Hinglish — max 12 words\",\n" +
       "  \"growth_score\": 0,\n" +
       "  \"reels_analysis\": [\n" +
       "    {\n" +
       "      \"number\": 1,\n" +
-      "      \"algorithm_read\": \"Instagram ne is reel ko kaise read kiya hoga — 1 line\",\n" +
-      "      \"status_reason\": \"Kyun viral/flop/average — data se backed human tone 2 lines\"\n" +
+      "      \"algorithm_read\": \"Instagram ne is reel ko kaise read kiya — 1 line\",\n" +
+      "      \"status_reason\": \"Kyun viral/flop/average — data backed human tone 2 lines\"\n" +
       "    }\n" +
       "  ],\n" +
-      "  \"viral_pattern\": \"Viral reels mein EXACTLY kya common tha — specific numbers mention kar — 3-4 lines\",\n" +
+      "  \"viral_pattern\": \"Viral reels mein EXACTLY kya common tha — specific data mention — 3-4 lines\",\n" +
       "  \"flop_pattern\": \"Flop reels mein EXACTLY kya common tha — specific honest — 3-4 lines\",\n" +
       "  \"the_one_thing\": \"Ek sabse badi insight — agar sirf ye fix ho toh sab badal jaaye — 2-3 lines powerful\",\n" +
       "  \"top_3_mistakes\": [\n" +
       "    {\n" +
       "      \"mistake\": \"Specific galti — data se nikali\",\n" +
-      "      \"why_it_hurts\": \"Algorithm pe kya impact padta hai is galti ka\",\n" +
+      "      \"why_it_hurts\": \"Algorithm pe kya impact padta hai\",\n" +
       "      \"exact_fix\": \"Exactly kya karna hai — step by step\"\n" +
       "    }\n" +
       "  ],\n" +
@@ -222,21 +256,22 @@ app.post("/api/analyze", async function(req, res) {
       "    \"audio_strategy\": \"Original ya trending — kyun — data se backed\",\n" +
       "    \"caption_line_1\": \"Caption ki pehli line exactly kya honi chahiye\",\n" +
       "    \"hashtag_count\": \"Exactly kitne hashtags — kyun\",\n" +
-      "    \"post_day_time\": \"Exact din aur time — data se nikala\",\n" +
-      "    \"viral_trigger\": \"Is reel mein kya cheez log share karwayegi — specifically\",\n" +
-      "    \"expected_result\": \"Agar sab sahi kiya toh kya expect kar sakte hain realistically\"\n" +
+      "    \"post_day_time\": \"Exact din aur time\",\n" +
+      "    \"viral_trigger\": \"Is reel mein kya cheez log share karwayegi\",\n" +
+      "    \"expected_result\": \"Agar sab sahi kiya toh kya expect kar sakte hain\"\n" +
       "  },\n" +
       "  \"thirty_day_plan\": [\n" +
       "    {\n" +
       "      \"week\": \"Week 1\",\n" +
-      "      \"goal\": \"Is week ka specific measurable goal\",\n" +
+      "      \"goal\": \"Specific measurable goal\",\n" +
       "      \"daily_action\": \"Exactly kya karna hai har din\",\n" +
       "      \"success_metric\": \"Kaise pata chalega week successful raha\"\n" +
       "    }\n" +
       "  ],\n" +
-      "  \"expert_verdict\": \"3 paragraphs. Pehla: Is account ki real situation kya hai data se. Doosra: Ek cheez jo agar agle 30 din mein kar le toh trajectory badal jaaye. Teesra: Honest prediction — agar ye sab kiya toh 30 din mein kya ho sakta hai realistically. Hinglish. Seedha. Jaise ek expert dost baat kar raha ho jiske paas 10 saal ka data hai.\"\n" +
+      "  \"expert_verdict\": \"3 paragraphs. Pehla: Real situation kya hai data se. Doosra: Ek cheez jo 30 din mein trajectory badal de. Teesra: Honest 30-day prediction. Hinglish. Seedha. No sugarcoating.\"\n" +
       "}";
 
+    // STEP 6: Groq AI analysis
     var groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -255,22 +290,32 @@ app.post("/api/analyze", async function(req, res) {
     });
 
     var gd = await groqRes.json();
-    if (gd.error) throw new Error(gd.error.message);
+    if (gd.error) throw new Error("Groq error: " + gd.error.message);
 
     var txt = gd.choices[0].message.content;
     var clean = txt.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+
+    // Find JSON object
+    var jsonStart = clean.indexOf("{");
+    var jsonEnd = clean.lastIndexOf("}");
+    if (jsonStart !== -1 && jsonEnd !== -1) {
+      clean = clean.slice(jsonStart, jsonEnd + 1);
+    }
+
     var ai = JSON.parse(clean);
 
     res.json({ reels: reels, ai: ai, username: username, score: score });
 
   } catch (err) {
-    console.error(err);
+    console.error("Error:", err.message);
     res.status(500).json({ error: err.message || "Server error" });
   }
 });
+
+// ── Start ─────────────────────────────────────────────────────
 
 var PORT = process.env.PORT || 3000;
 app.listen(PORT, function() {
   console.log("InstaGrow AI running on port " + PORT);
 });
-    
+
