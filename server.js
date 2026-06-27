@@ -118,12 +118,12 @@ app.post("/api/analyze", async function(req, res) {
   try {
     // STEP 1: Start Apify run
     var startRes = await fetch(
-      "https://api.apify.com/v2/acts/apify~instagram-reel-scraper/runs?token=" + APIFY_TOKEN,
+      "https://api.apify.com/v2/acts/instagram-scraper~fast-instagram-post-scraper/runs?token=" + APIFY_TOKEN,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          directUrls: [username],
+          directUrls: username,
           resultsLimit: 10,
         }),
       }
