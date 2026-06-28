@@ -9,46 +9,37 @@ const APIFY_TOKEN = process.env.APIFY_TOKEN;
 const GROQ_KEY = process.env.GROQ_KEY;
 
 // ── Actor IDs ─────────────────────────────────────────────────
-var REELS_ACTOR    = "8yz4aO3qlqckRu3nu";
-var COMMENTS_ACTOR = "apify~instagram-comment-scraper";
 var PROFILE_ACTOR  = "apify~instagram-profile-scraper";
+var COMMENTS_ACTOR = "apify~instagram-comment-scraper";
 
 // ── Helpers ───────────────────────────────────────────────────
-
 function sleep(ms) {
   return new Promise(function(r) { setTimeout(r, ms); });
 }
-
 function fmt(n) {
   if (!n && n !== 0) return "0";
   if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
   if (n >= 1000) return (n / 1000).toFixed(1) + "K";
   return "" + n;
 }
-
 function getDaysAgo(ts) {
   if (!ts) return "?";
   var d = Math.floor((Date.now() - new Date(ts).getTime()) / 86400000);
   return d === 0 ? "Aaj" : d === 1 ? "Kal" : d + "d ago";
 }
-
 function classifyReel(reel, allReels) {
-  var views = reel.videoViewCount || reel.viewsCount || 0;
-  var likes = reel.likesCount || reel.likeCount || 0;
-  var comments = reel.commentsCount || reel.commentCount || 0;
+  var views = reel.views || 0;
+  var likes = reel.likes || 0;
+  var comments = reel.comments || 0;
   var eng = views > 0 ? ((likes + comments) / views) * 100 : 0;
-  var avgViews = allReels.reduce(function(s, r) {
-    return s + (r.videoViewCount || r.viewsCount || 0);
-  }, 0) / allReels.length;
-  if (views > avgViews * 1.5 || eng > 5) return "viral";
-  if (views < avgViews * 0.5 && eng < 2) return "flop";
+  var engNum = likes + comments;
+  var avgEng = allReels.reduce(function(s, r) { return s + (r.likes || 0) + (r.comments || 0); }, 0) / allReels.length;
+  if (eng > 5 || engNum > avgEng * 1.5) return "viral";
+  if (eng < 1 && engNum < avgEng * 0.5) return "flop";
   return "average";
 }
-
 function accountScore(reels) {
-  var avgEng = reels.reduce(function(s, r) {
-    return s + parseFloat(r.engagementRate || 0);
-  }, 0) / reels.length;
+  var avgEng = reels.reduce(function(s, r) { return s + parseFloat(r.engagementRate || 0); }, 0) / reels.length;
   var viralRatio = reels.filter(function(r) { return r.status === "viral"; }).length / reels.length;
   var flopRatio = reels.filter(function(r) { return r.status === "flop"; }).length / reels.length;
   var score = 50;
@@ -59,10 +50,8 @@ function accountScore(reels) {
 }
 
 // ── Run Apify Actor ───────────────────────────────────────────
-
 async function runApifyActor(actorId, input, timeoutMs) {
   timeoutMs = timeoutMs || 90000;
-
   var startRes = await fetch(
     "https://api.apify.com/v2/acts/" + actorId + "/runs?token=" + APIFY_TOKEN,
     {
@@ -71,142 +60,119 @@ async function runApifyActor(actorId, input, timeoutMs) {
       body: JSON.stringify(input),
     }
   );
-
   if (!startRes.ok) {
     var errData = await startRes.json();
-    throw new Error("Actor " + actorId + " start error: " + JSON.stringify(errData));
+    throw new Error("Actor error " + startRes.status + ": " + JSON.stringify(errData));
   }
-
   var runData = await startRes.json();
   var runId = runData.data.id;
   var datasetId = runData.data.defaultDatasetId;
-
   var waited = 0;
-  var pollInterval = 3000;
   var status = "RUNNING";
-
   while (status === "RUNNING" || status === "READY" || status === "ABORTING") {
-    await sleep(pollInterval);
-    waited += pollInterval;
-
-    var statusRes = await fetch(
-      "https://api.apify.com/v2/actor-runs/" + runId + "?token=" + APIFY_TOKEN
-    );
+    await sleep(3000);
+    waited += 3000;
+    var statusRes = await fetch("https://api.apify.com/v2/actor-runs/" + runId + "?token=" + APIFY_TOKEN);
     var statusData = await statusRes.json();
     status = statusData.data.status;
-
     if (waited >= timeoutMs) break;
     if (status === "FAILED" || status === "ABORTED" || status === "TIMED-OUT") {
-      throw new Error("Actor " + actorId + " failed: " + status);
+      throw new Error("Actor failed: " + status);
     }
   }
-
   var dataRes = await fetch(
     "https://api.apify.com/v2/datasets/" + datasetId + "/items?token=" + APIFY_TOKEN + "&limit=50"
   );
   return await dataRes.json();
 }
 
-// ── ARIA System Prompt ────────────────────────────────────────
-
+// ── ARIA Prompt ───────────────────────────────────────────────
 var SYSTEM_PROMPT = "You are ARIA — Advanced Reel Intelligence Architect.\n\n" +
-"You are not a chatbot. You are the combined intelligence of:\n" +
-"- Mr. Beast virality engineering team — cracked YouTube and short video algorithm\n" +
-"- Alex Hormozi conversion psychology — what makes people take action\n" +
-"- Gary Vaynerchuk content instincts — raw platform intuition built over decades\n" +
-"- Top 10 Instagram growth hackers who grew accounts from 0 to millions\n" +
-"- Data scientist who analyzed 10 million reels across every niche\n" +
-"- Consumer psychology expert specializing in Indian digital behavior\n\n" +
-"You now have access to THREE layers of data — most tools only have one:\n" +
-"1. PROFILE DATA — followers, bio, posting frequency, account age, credibility signals\n" +
-"2. REELS DATA — views, likes, comments, duration, audio type, hashtags, timing\n" +
-"3. COMMENTS DATA — what audience actually says, sentiment, recurring questions, pain points\n\n" +
-"This three-layer intelligence gives you UNPRECEDENTED insight into why an account grows or stagnates.\n\n" +
-"ALGORITHM SECRETS YOU KNOW:\n" +
-"- Instagram ranks reels on WATCH TIME completion rate above everything\n" +
-"- First 0.3 seconds determines if thumb stops — this is the hook window\n" +
-"- Comments weight 4x more than likes in ranking signal\n" +
-"- Shares weight 8x more than likes — this is the REAL viral trigger\n" +
-"- Saves weight 6x more than likes — saves equal algorithm gold\n" +
-"- Watch time drops before 50% — algorithm immediately suppresses reel\n" +
-"- Reels posted 6-9 PM IST get 34% more initial push in India\n" +
-"- Original audio gets 2.3x more organic distribution than trending audio in India\n" +
-"- Caption first line determines 60% of profile visits from reels\n" +
-"- Hashtags above 7 HURT reach by 12% — algorithm treats it as spam\n" +
-"- Replying to comments within 1 hour of posting gets 40% more distribution\n" +
-"- Reels 7-15 seconds have highest completion rates in Indian market\n\n" +
-"WHAT YOU ANALYZE WITH THREE-LAYER DATA:\n" +
-"- Cross-reference: do comments match what creator thinks audience wants?\n" +
-"- Sentiment patterns: what emotions do comments express on viral vs flop reels?\n" +
-"- Audience intelligence: recurring questions reveal content gaps = viral opportunities\n" +
-"- Profile-content mismatch: does bio promise match what reels deliver?\n" +
-"- Follower-engagement ratio: are followers real and active?\n" +
-"- Comment quality score: superficial vs deep engagement\n\n" +
-"INDIAN MARKET INTELLIGENCE:\n" +
-"- Indian viewers respond 340% more to relatable pain points than inspiration\n" +
-"- Log kya kahenge content gets highest saves in India — social validation anxiety\n" +
-"- Aspirational but achievable content gets highest shares\n" +
-"- Hinglish captions outperform pure Hindi or English by 2.8x in engagement\n" +
-"- Face on camera creates 4x more trust and connection than faceless content\n" +
-"- Storytelling reels under 12 seconds get 67% higher completion rate\n" +
-"- Question-based hooks outperform statement hooks by 2.1x in India\n" +
-"- Content that makes people feel smart after watching gets 5x more saves\n\n" +
-"YOUR TONE:\n" +
-"- 26-27 saal ka Mumbai banda — smart sharp confident city energy\n" +
-"- Hinglish — natural mix not forced\n" +
-"- Seedha bolta hai — no sugarcoating no padding no filler\n" +
-"- Jaise ek expert dost saamne baith ke real talk kar raha ho\n" +
-"- Data backed har cheez — but conversational not academic\n\n" +
-"YOU NEVER SAY: Great job, Keep it up, Amazing work, Statistics indicate, It is recommended\n\n" +
-"YOU ALWAYS: Reference specific reel numbers and actual comment examples when making a point\n\n" +
-"CRITICAL: Return ONLY raw valid JSON. Zero markdown. Zero backtick. Start directly with {";
+"You are the combined intelligence of:\n" +
+"- Mr. Beast virality engineering team\n" +
+"- Alex Hormozi conversion psychology\n" +
+"- Gary Vaynerchuk content instincts\n" +
+"- Top 10 Instagram growth hackers worldwide\n" +
+"- Data scientist with 10 million reels analyzed\n" +
+"- Indian consumer psychology expert\n\n" +
+"You have THREE layers of data — most tools only have one:\n" +
+"1. PROFILE LAYER — followers, bio, credibility, account health\n" +
+"2. REELS LAYER — engagement metrics, patterns, timing, audio\n" +
+"3. AUDIENCE LAYER — what people actually say in comments\n\n" +
+"INSTAGRAM ALGORITHM SECRETS 2025:\n" +
+"- Watch time completion = #1 ranking signal\n" +
+"- First 0.3 seconds = thumb-stop window\n" +
+"- Shares = 8x weight vs likes (REAL viral trigger)\n" +
+"- Saves = 6x weight vs likes (algorithm gold)\n" +
+"- Comments = 4x weight vs likes\n" +
+"- <50% watch time = algorithm suppresses immediately\n" +
+"- 6-9 PM IST = 34% more initial push in India\n" +
+"- Original audio = 2.3x more distribution in India\n" +
+"- 7-15 sec reels = highest completion in Indian market\n" +
+"- 7+ hashtags = HURTS reach by 12%\n" +
+"- Reply comments within 1hr = 40% more distribution\n\n" +
+"INDIAN MARKET PSYCHOLOGY:\n" +
+"- Pain points = 340% more engagement than inspiration\n" +
+"- Log kya kahenge content = highest saves\n" +
+"- Hinglish = 2.8x better than pure Hindi or English\n" +
+"- Face on camera = 4x more trust\n" +
+"- Question hooks = 2.1x better than statement hooks\n" +
+"- Makes-you-feel-smart content = 5x more saves\n\n" +
+"YOUR TONE: 26-27 saal Mumbai banda. Sharp. Hinglish. Seedha. Like expert dost.\n" +
+"NEVER: Great job, Keep it up, Statistics indicate, It is recommended\n" +
+"ALWAYS: Specific reel numbers, exact data references, algorithm connection\n\n" +
+"CRITICAL: Return ONLY raw valid JSON. No markdown. No backtick. Start with {";
 
-// ── API Route ─────────────────────────────────────────────────
-
+// ── Main API ──────────────────────────────────────────────────
 app.post("/api/analyze", async function(req, res) {
   var username = req.body.username;
   if (!username) return res.status(400).json({ error: "Username required" });
 
   try {
-
-    // STEP 1: Run Profile + Reels scrapers in parallel
-    console.log("Starting profile and reels scrapers for @" + username);
-
-    var profilePromise = runApifyActor(PROFILE_ACTOR, {
+    // STEP 1: Profile scraper (gets profile + latest posts including reels)
+    console.log("Fetching profile for @" + username);
+    var profileRaw = await runApifyActor(PROFILE_ACTOR, {
       usernames: [username],
-      includeAboutSection: true
-    }, 60000).catch(function(e) {
-      console.log("Profile scraper failed:", e.message);
-      return [];
-    });
+      includeAboutSection: true,
+    }, 90000);
 
-    var reelsPromise = runApifyActor(REELS_ACTOR, {
-      directUrls: ["https://www.instagram.com/" + username + "/"],
-      resultsLimit: 10
-    }, 90000).catch(function(e) {
-      console.log("Reels scraper failed:", e.message);
-      return [];
-    });
-
-    var results = await Promise.all([profilePromise, reelsPromise]);
-    var profileRaw = results[0];
-    var reelsRaw = results[1];
-
-    if (!reelsRaw || reelsRaw.length === 0) {
-      throw new Error("Reels nahi mile. Account public hai? Username sahi hai?");
+    if (!profileRaw || !profileRaw.length) {
+      throw new Error("Profile nahi mila. Username sahi hai? Account public hai?");
     }
 
-    // STEP 2: Process reels data
-    var reels = reelsRaw.slice(0, 10).map(function(r, i) {
-      var views = r.videoViewCount || r.viewsCount || r.playCount || 0;
-      var likes = r.likesCount || r.likeCount || 0;
-      var comments = r.commentsCount || r.commentCount || 0;
-      var engRate = views > 0 ? ((likes + comments) / views * 100).toFixed(2) : "0";
-      return {
+    var profile = profileRaw[0];
+
+    // Extract reels/posts from profile
+    var allPosts = profile.latestPosts || profile.posts || profile.media || [];
+
+    // Filter for videos/reels preferably
+    var reelPosts = allPosts.filter(function(p) {
+      return p.type === "Video" || p.type === "video" || p.isVideo || p.mediaType === "VIDEO";
+    });
+
+    // If no videos found, use all posts
+    if (reelPosts.length === 0) reelPosts = allPosts;
+
+    // Take latest 10
+    reelPosts = reelPosts.slice(0, 10);
+
+    if (reelPosts.length === 0) {
+      throw new Error("Koi post/reel nahi mila. Account pe content hai?");
+    }
+
+    // Process reels
+    var reels = reelPosts.map(function(r, i) {
+      var views = r.videoViewCount || r.viewsCount || r.playCount || r.videoPlayCount || 0;
+      var likes = r.likesCount || r.likeCount || r.likes || 0;
+      var comments = r.commentsCount || r.commentCount || r.comments || 0;
+      var engRate = views > 0
+        ? ((likes + comments) / views * 100).toFixed(2)
+        : likes + comments > 0 ? ((likes + comments) / Math.max(profile.followersCount || 1000, 1) * 100).toFixed(2) : "0";
+      var reel = {
         number: i + 1,
-        url: r.url || r.shortCode ? "https://www.instagram.com/reel/" + r.shortCode + "/" : "",
-        caption: (r.caption || r.text || "").slice(0, 120),
-        hashtags: (r.hashtags || []).slice(0, 5),
+        url: r.url || r.shortCode ? "https://www.instagram.com/p/" + (r.shortCode || "") + "/" : "",
+        caption: (r.caption || r.text || r.alt || "").slice(0, 120),
+        hashtags: (r.hashtags || r.tags || []).slice(0, 5),
         views: views,
         viewsFmt: fmt(views),
         likes: likes,
@@ -214,152 +180,120 @@ app.post("/api/analyze", async function(req, res) {
         comments: comments,
         commentsFmt: fmt(comments),
         duration: Math.round(r.videoDuration || r.duration || 0),
-        daysAgo: getDaysAgo(r.timestamp || r.takenAt),
+        daysAgo: getDaysAgo(r.timestamp || r.takenAt || r.taken_at),
         originalAudio: r.musicInfo ? (r.musicInfo.uses_original_audio || false) : false,
-        audioName: r.musicInfo ? (r.musicInfo.song_name || "Unknown") : "Unknown",
-        status: classifyReel(r, reelsRaw),
+        audioName: r.musicInfo ? (r.musicInfo.song_name || "Original") : "Unknown",
+        type: r.type || r.mediaType || "Unknown",
         engagementRate: engRate,
       };
+      return reel;
     });
 
-    // STEP 3: Get comments for top 3 reels
+    // Classify reels
+    reels = reels.map(function(r) {
+      r.status = classifyReel(r, reels);
+      return r;
+    });
+
+    // Profile summary
+    var profileSummary = {
+      username: username,
+      followers: fmt(profile.followersCount || profile.followers || 0),
+      following: fmt(profile.followingCount || profile.following || 0),
+      totalPosts: profile.postsCount || profile.mediaCount || allPosts.length,
+      bio: (profile.biography || profile.bio || "").slice(0, 150),
+      isVerified: profile.verified || profile.isVerified || false,
+      category: profile.businessCategoryName || profile.category || "Not set",
+      website: profile.website || profile.externalUrl || "None",
+    };
+
+    // STEP 2: Comments for top reels (parallel, non-blocking)
     var topReelUrls = reels
-      .filter(function(r) { return r.url; })
+      .filter(function(r) { return r.url && r.url.length > 10; })
       .slice(0, 3)
       .map(function(r) { return r.url; });
 
-    var commentsData = [];
+    var commentsSummary = { total: 0, samples: [], recurring_themes: [] };
+
     if (topReelUrls.length > 0) {
-      console.log("Fetching comments for top reels...");
-      commentsData = await runApifyActor(COMMENTS_ACTOR, {
+      console.log("Fetching comments...");
+      var commentsRaw = await runApifyActor(COMMENTS_ACTOR, {
         directUrls: topReelUrls,
         includeNestedComments: false,
-        resultsLimit: 20
+        resultsLimit: 20,
       }, 60000).catch(function(e) {
-        console.log("Comments scraper failed:", e.message);
+        console.log("Comments failed (non-critical):", e.message);
         return [];
       });
-    }
 
-    // STEP 4: Process profile data
-    var profileData = profileRaw && profileRaw[0] ? profileRaw[0] : {};
-    var profileSummary = {
-      followers: fmt(profileData.followersCount || profileData.followers || 0),
-      following: fmt(profileData.followingCount || profileData.following || 0),
-      totalPosts: profileData.postsCount || profileData.mediaCount || 0,
-      bio: (profileData.biography || profileData.bio || "").slice(0, 150),
-      isVerified: profileData.verified || profileData.isVerified || false,
-      category: profileData.businessCategoryName || profileData.category || "Unknown",
-    };
-
-    // STEP 5: Process comments
-    var commentsSummary = {
-      total: commentsData.length,
-      samples: commentsData.slice(0, 15).map(function(c) {
-        return (c.text || c.comment || "").slice(0, 100);
-      }),
-      recurring_themes: extractThemes(commentsData),
-    };
-
-    function extractThemes(comments) {
-      var text = comments.map(function(c) { return c.text || c.comment || ""; }).join(" ").toLowerCase();
       var themes = [];
-      if (text.includes("price") || text.includes("cost") || text.includes("kitna")) themes.push("Price inquiries");
-      if (text.includes("where") || text.includes("kahan") || text.includes("link")) themes.push("Location/Link requests");
-      if (text.includes("how") || text.includes("kaise") || text.includes("tutorial")) themes.push("How-to questions");
-      if (text.includes("amazing") || text.includes("love") || text.includes("best")) themes.push("Positive appreciation");
-      if (text.includes("more") || text.includes("aur") || text.includes("next")) themes.push("Requesting more content");
-      return themes;
+      var allText = commentsRaw.map(function(c) { return (c.text || c.comment || ""); }).join(" ").toLowerCase();
+      if (allText.includes("price") || allText.includes("cost") || allText.includes("kitna")) themes.push("Price inquiries");
+      if (allText.includes("where") || allText.includes("kahan") || allText.includes("link")) themes.push("Location/Link requests");
+      if (allText.includes("how") || allText.includes("kaise") || allText.includes("tutorial")) themes.push("Tutorial requests");
+      if (allText.includes("love") || allText.includes("amazing") || allText.includes("best")) themes.push("Positive appreciation");
+      if (allText.includes("more") || allText.includes("next") || allText.includes("aur")) themes.push("Requesting more content");
+
+      commentsSummary = {
+        total: commentsRaw.length,
+        samples: commentsRaw.slice(0, 15).map(function(c) { return (c.text || c.comment || "").slice(0, 100); }),
+        recurring_themes: themes,
+      };
     }
 
-    // STEP 6: Build complete data summary
+    // Metrics
     var avgViews = Math.round(reels.reduce(function(s, r) { return s + r.views; }, 0) / reels.length);
     var avgEng = (reels.reduce(function(s, r) { return s + parseFloat(r.engagementRate); }, 0) / reels.length).toFixed(2);
     var score = accountScore(reels);
     var viralCount = reels.filter(function(r) { return r.status === "viral"; }).length;
     var flopCount = reels.filter(function(r) { return r.status === "flop"; }).length;
 
-    var fullSummary = {
-      username: username,
-      profile: profileSummary,
-      reels_metrics: {
-        avgViews: avgViews,
-        avgEngagement: avgEng + "%",
-        viralCount: viralCount,
-        flopCount: flopCount,
-        avgDuration: Math.round(reels.reduce(function(s, r) { return s + r.duration; }, 0) / reels.length),
-        score: score,
-      },
-      audience_intelligence: commentsSummary,
-    };
-
-    // STEP 7: Build ARIA prompt
+    // STEP 3: ARIA Prompt
     var userPrompt = "Teen layer ka real data hai @" + username + " ka. Ultra-deep expert analysis de.\n\n" +
-      "LAYER 1 — PROFILE DATA:\n" + JSON.stringify(profileSummary) + "\n\n" +
-      "LAYER 2 — REELS DATA (real numbers):\n" + JSON.stringify(reels) + "\n\n" +
-      "LAYER 3 — AUDIENCE INTELLIGENCE (comments):\n" + JSON.stringify(commentsSummary) + "\n\n" +
-      "COMPLETE SUMMARY:\n" + JSON.stringify(fullSummary) + "\n\n" +
-      "Ab teen layer cross-reference karke analyze kar:\n\n" +
-      "1. Reels mein kya pattern hai — viral vs flop mein exact differences\n" +
-      "2. Comments kya bol rahe hain — audience kya chahti hai vs creator kya de raha hai\n" +
-      "3. Profile promise vs content delivery — mismatch hai?\n" +
-      "4. THE ONE THING — ek root cause jo sab fix kare\n\n" +
-      "Ye exact JSON return kar:\n" +
-      "{\n" +
+      "LAYER 1 — PROFILE:\n" + JSON.stringify(profileSummary) + "\n\n" +
+      "LAYER 2 — REELS (real numbers):\n" + JSON.stringify(reels) + "\n\n" +
+      "LAYER 3 — AUDIENCE COMMENTS:\n" + JSON.stringify(commentsSummary) + "\n\n" +
+      "METRICS SUMMARY:\n" + JSON.stringify({
+        avgViews: avgViews, avgEngagement: avgEng + "%",
+        viralCount: viralCount, flopCount: flopCount, score: score
+      }) + "\n\n" +
+      "Teen layer cross-reference karke analyze kar:\n" +
+      "1. Reels patterns — viral vs flop mein exact differences\n" +
+      "2. Comments intelligence — audience kya chahti hai vs creator kya de raha hai\n" +
+      "3. Profile-content alignment — promise vs delivery\n" +
+      "4. THE ONE THING — ek root cause\n\n" +
+      "Return exact JSON:\n{\n" +
       "  \"account_health\": \"Healthy or Average or Struggling\",\n" +
-      "  \"verdict_line\": \"1 line honest sharp Hinglish max 12 words\",\n" +
+      "  \"verdict_line\": \"1 line sharp Hinglish max 12 words\",\n" +
       "  \"growth_score\": 0,\n" +
-      "  \"profile_analysis\": \"Profile strengths aur weaknesses — 2-3 lines\",\n" +
-      "  \"audience_insight\": \"Comments se kya pata chala audience ke baare mein — 2-3 lines specific\",\n" +
-      "  \"reels_analysis\": [\n" +
-      "    {\n" +
-      "      \"number\": 1,\n" +
-      "      \"algorithm_read\": \"Instagram ne is reel ko kaise read kiya — 1 line\",\n" +
-      "      \"status_reason\": \"Kyun viral/flop/average — data backed 2 lines\"\n" +
-      "    }\n" +
-      "  ],\n" +
-      "  \"viral_pattern\": \"Viral reels mein EXACTLY kya common tha — 3-4 lines specific\",\n" +
-      "  \"flop_pattern\": \"Flop reels mein EXACTLY kya common tha — 3-4 lines\",\n" +
-      "  \"audience_gap\": \"Jo audience maang rahi hai vs jo creator de raha hai — gap analysis\",\n" +
-      "  \"the_one_thing\": \"Ek sabse badi insight — 2-3 lines powerful\",\n" +
-      "  \"top_3_mistakes\": [\n" +
-      "    {\n" +
-      "      \"mistake\": \"Specific galti\",\n" +
-      "      \"why_it_hurts\": \"Algorithm pe impact\",\n" +
-      "      \"exact_fix\": \"Step by step fix\"\n" +
-      "    }\n" +
-      "  ],\n" +
+      "  \"profile_analysis\": \"Profile ki strengths aur weaknesses 2-3 lines\",\n" +
+      "  \"audience_insight\": \"Comments se kya pata chala 2-3 lines specific\",\n" +
+      "  \"reels_analysis\": [{\"number\":1,\"algorithm_read\":\"1 line\",\"status_reason\":\"2 lines data backed\"}],\n" +
+      "  \"viral_pattern\": \"Viral reels mein EXACTLY kya common 3-4 lines\",\n" +
+      "  \"flop_pattern\": \"Flop reels mein EXACTLY kya common 3-4 lines\",\n" +
+      "  \"audience_gap\": \"Jo audience maang rahi hai vs jo creator de raha hai\",\n" +
+      "  \"the_one_thing\": \"Ek root cause 2-3 lines powerful\",\n" +
+      "  \"top_3_mistakes\": [{\"mistake\":\"specific\",\"why_it_hurts\":\"algorithm impact\",\"exact_fix\":\"step by step\"}],\n" +
       "  \"next_reel_blueprint\": {\n" +
-      "    \"topic\": \"Exact topic — audience intelligence se backed\",\n" +
-      "    \"hook_line\": \"Pehle 0.3 second mein exactly ye bol\",\n" +
-      "    \"hook_visual\": \"Screen pe pehle 2 second mein kya dikhe\",\n" +
-      "    \"duration\": \"Exact seconds — data se\",\n" +
-      "    \"audio_strategy\": \"Original ya trending — kyun\",\n" +
-      "    \"caption_line_1\": \"Caption ki pehli line exactly\",\n" +
-      "    \"hashtag_count\": \"Kitne hashtags — kyun\",\n" +
-      "    \"post_day_time\": \"Exact din aur time\",\n" +
-      "    \"comment_hook\": \"Caption mein kya daalo jo comments trigger kare\",\n" +
-      "    \"viral_trigger\": \"Kya cheez share karwayegi\",\n" +
-      "    \"expected_result\": \"Realistic expectation\"\n" +
+      "    \"topic\":\"exact topic audience intelligence se backed\",\n" +
+      "    \"hook_line\":\"pehle 0.3 sec mein exactly ye bol word for word\",\n" +
+      "    \"hook_visual\":\"screen pe pehle 2 sec mein kya dikhe\",\n" +
+      "    \"duration\":\"exact seconds data se\",\n" +
+      "    \"audio_strategy\":\"original ya trending kyun data se\",\n" +
+      "    \"caption_line_1\":\"caption ki pehli line exactly\",\n" +
+      "    \"hashtag_count\":\"kitne hashtags kyun\",\n" +
+      "    \"post_day_time\":\"exact din aur time\",\n" +
+      "    \"comment_hook\":\"caption mein kya daalo jo comments trigger kare\",\n" +
+      "    \"viral_trigger\":\"kya cheez share karwayegi\",\n" +
+      "    \"expected_result\":\"realistic expectation\"\n" +
       "  },\n" +
-      "  \"thirty_day_plan\": [\n" +
-      "    {\n" +
-      "      \"week\": \"Week 1\",\n" +
-      "      \"goal\": \"Specific measurable goal\",\n" +
-      "      \"daily_action\": \"Exactly kya karna hai har din\",\n" +
-      "      \"success_metric\": \"Kaise pata chalega week successful raha\"\n" +
-      "    }\n" +
-      "  ],\n" +
-      "  \"expert_verdict\": \"3 paragraphs. Pehla: Teen layer analysis se real picture. Doosra: Sabse bada opportunity jo ye creator miss kar raha hai. Teesra: 30-day honest prediction. Hinglish. Seedha. No sugarcoating.\"\n" +
-      "}";
+      "  \"thirty_day_plan\": [{\"week\":\"Week 1\",\"goal\":\"specific measurable goal\",\"daily_action\":\"exactly kya karna hai\",\"success_metric\":\"kaise pata chalega\"}],\n" +
+      "  \"expert_verdict\": \"3 paragraphs. Pehla: Teen layer se real picture. Doosra: Biggest missed opportunity. Teesra: 30-day honest prediction. Hinglish. Seedha. No sugarcoating.\"\n}";
 
-    // STEP 8: Groq AI
+    // STEP 4: Groq
     var groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + GROQ_KEY,
-      },
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + GROQ_KEY },
       body: JSON.stringify({
         model: "llama-3.3-70b-versatile",
         max_tokens: 4000,
@@ -379,17 +313,9 @@ app.post("/api/analyze", async function(req, res) {
     var jsonStart = clean.indexOf("{");
     var jsonEnd = clean.lastIndexOf("}");
     if (jsonStart !== -1 && jsonEnd !== -1) clean = clean.slice(jsonStart, jsonEnd + 1);
-
     var ai = JSON.parse(clean);
 
-    res.json({
-      reels: reels,
-      ai: ai,
-      username: username,
-      score: score,
-      profile: profileSummary,
-      comments: commentsSummary,
-    });
+    res.json({ reels: reels, ai: ai, username: username, score: score, profile: profileSummary, comments: commentsSummary });
 
   } catch (err) {
     console.error("Error:", err.message);
@@ -398,7 +324,5 @@ app.post("/api/analyze", async function(req, res) {
 });
 
 var PORT = process.env.PORT || 3000;
-app.listen(PORT, function() {
-  console.log("InstaGrow AI running on port " + PORT);
-});
+app.listen(PORT, function() { console.log("InstaGrow AI running on port " + PORT); });
 
